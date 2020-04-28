@@ -210,12 +210,11 @@ export class WorkspaceCommandContribution implements CommandContribution {
                         validate: name => this.validateFileName(name, parent, true)
                     }, this.labelProvider);
 
-                    dialog.open().then(name => {
+                    dialog.open().then(async name => {
                         if (name) {
                             const fileUri = parentUri.resolve(name);
-                            this.fileSystem.createFile(fileUri.toString()).then(() => {
-                                open(this.openerService, fileUri);
-                            });
+                            await this.workspaceService.createFiles([fileUri]);
+                            open(this.openerService, fileUri);
                         }
                     });
                 }
@@ -234,7 +233,8 @@ export class WorkspaceCommandContribution implements CommandContribution {
                     }, this.labelProvider);
                     dialog.open().then(name => {
                         if (name) {
-                            this.fileSystem.createFolder(parentUri.resolve(name).toString());
+                            const folderUri = parentUri.resolve(name);
+                            this.workspaceService.createFolders([folderUri]);
                         }
                     });
                 }
@@ -243,8 +243,10 @@ export class WorkspaceCommandContribution implements CommandContribution {
         registry.registerCommand(WorkspaceCommands.FILE_RENAME, this.newMultiUriAwareCommandHandler({
             isEnabled: uris => uris.some(uri => !this.isWorkspaceRoot(uri)) && uris.length === 1,
             isVisible: uris => uris.some(uri => !this.isWorkspaceRoot(uri)) && uris.length === 1,
-            execute: uris => uris.forEach(uri => {
-                this.getParent(uri).then(async parent => {
+            execute: (uris): void => {
+                const filesToRename: { oldUri: URI, newUri: URI }[] = [];
+                const tasks = uris.map(async uri => {
+                    const parent = await this.getParent(uri);
                     if (parent) {
                         const initialValue = uri.path.base;
                         const stat = await this.fileSystem.getFileStat(uri.toString());
@@ -267,14 +269,18 @@ export class WorkspaceCommandContribution implements CommandContribution {
                                 return this.validateFileName(name, parent, false);
                             }
                         });
-                        dialog.open().then(name => {
-                            if (name) {
-                                this.fileSystem.move(uri.toString(), uri.parent.resolve(name).toString(), { overwrite: true });
-                            }
-                        });
+                        const fileName = await dialog.open();
+                        if (fileName) {
+                            const oldUri = uri;
+                            const newUri = uri.parent.resolve(fileName);
+                            filesToRename.push({ oldUri, newUri });
+                        }
                     }
                 });
-            })
+                Promise.all(tasks).then(() => {
+                    this.workspaceService.renameFiles(filesToRename);
+                });
+            }
         }));
         registry.registerCommand(WorkspaceCommands.FILE_DUPLICATE, this.newMultiUriAwareCommandHandler(this.duplicateHandler));
         registry.registerCommand(WorkspaceCommands.FILE_DELETE, this.newMultiUriAwareCommandHandler(this.deleteHandler));

@@ -65,7 +65,7 @@ export class WorkspaceDeleteHandler implements UriCommandHandler<URI[]> {
     async execute(uris: URI[]): Promise<void> {
         const distinctUris = URI.getDistinctParents(uris);
         if (await this.confirm(distinctUris)) {
-            await Promise.all(distinctUris.map(uri => this.delete(uri)));
+            await this.deleteAll(distinctUris);
         }
     }
 
@@ -131,7 +131,7 @@ export class WorkspaceDeleteHandler implements UriCommandHandler<URI[]> {
     /**
      * Perform deletion of a given URI.
      *
-     * @param uris URIs of selected resources.
+     * @param uri URI of selected resource.
      */
     protected async delete(uri: URI): Promise<void> {
         try {
@@ -156,6 +156,19 @@ export class WorkspaceDeleteHandler implements UriCommandHandler<URI[]> {
             pending.push(this.shell.closeWidget(widget.id, { save: false }));
         }
         await Promise.all(pending);
+    }
+
+    /**
+     * Perform deletion of multiple URIs.
+     *
+     * @param uris URIs of selected resources.
+     */
+    protected async deleteAll(uris: URI[]): Promise<void> {
+        await this.workspaceService.deleteFiles(uris, (error, file) => {
+            if (typeof error === 'undefined') {
+                this.closeWithoutSaving(file);
+            }
+        });
     }
 
 }

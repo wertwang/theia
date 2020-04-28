@@ -18,14 +18,17 @@ import { injectable, inject, postConstruct } from 'inversify';
 import URI from '@theia/core/lib/common/uri';
 import { FileSystem, FileStat } from '@theia/filesystem/lib/common';
 import { FileSystemWatcher, FileChangeEvent } from '@theia/filesystem/lib/browser/filesystem-watcher';
-import { WorkspaceServer, THEIA_EXT, VSCODE_EXT, getTemporaryWorkspaceFileUri } from '../common';
+import {
+    WorkspaceServer, THEIA_EXT, VSCODE_EXT, getTemporaryWorkspaceFileUri, FileWillCreateEvent, FileCreateEvent, FileWillRenameEvent, FileRenameEvent, FileWillDeleteEvent,
+    FileDeleteEvent,
+} from '../common';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
 import {
     FrontendApplicationContribution, PreferenceServiceImpl, PreferenceScope, PreferenceSchemaProvider
 } from '@theia/core/lib/browser';
 import { Deferred } from '@theia/core/lib/common/promise-util';
 import { EnvVariablesServer } from '@theia/core/lib/common/env-variables';
-import { ILogger, Disposable, DisposableCollection, Emitter, Event, MaybePromise } from '@theia/core';
+import { ILogger, Disposable, DisposableCollection, Emitter, Event, MaybePromise, WaitUntilEvent } from '@theia/core';
 import { WorkspacePreferences } from './workspace-preferences';
 import * as jsoncparser from 'jsonc-parser';
 import * as Ajv from 'ajv';
@@ -70,6 +73,24 @@ export class WorkspaceService implements FrontendApplicationContribution {
     protected readonly envVariableServer: EnvVariablesServer;
 
     protected applicationName: string;
+
+    protected willCreateFilesEmitter = new Emitter<FileWillCreateEvent>();
+    readonly onWillCreateFiles = this.willCreateFilesEmitter.event;
+
+    protected didCreateFilesEmitter = new Emitter<FileCreateEvent>();
+    readonly onDidCreateFiles = this.didCreateFilesEmitter.event;
+
+    protected willRenameFilesEmitter = new Emitter<FileWillRenameEvent>();
+    readonly onWillRenameFiles = this.willRenameFilesEmitter.event;
+
+    protected didRenameFilesEmitter = new Emitter<FileRenameEvent>();
+    readonly onDidRenameFiles = this.didRenameFilesEmitter.event;
+
+    protected willDeleteFilesEmitter = new Emitter<FileWillDeleteEvent>();
+    readonly onWillDeleteFiles = this.willDeleteFilesEmitter.event;
+
+    protected didDeleteFilesEmitter = new Emitter<FileDeleteEvent>();
+    readonly onDidDeleteFiles = this.didDeleteFilesEmitter.event;
 
     @postConstruct()
     protected async init(): Promise<void> {
@@ -587,6 +608,140 @@ export class WorkspaceService implements FrontendApplicationContribution {
         return uris.every(uri => rootUris.has(uri.toString()));
     }
 
+    // #region (create|rename|delete)Files apis
+
+    /**
+     * Create files for the given URIs, and dispatch proper events.
+     *
+     * @param files array of file URIs to create.
+     * @param onCreatedFile callback called on each successful file creation.
+     * @returns array of successfully created file URIs.
+     */
+    async createFiles(files: URI[], onCreatedFile?: Callback<URI>): Promise<URI[]> {
+        await WaitUntilEvent.fire(this.willCreateFilesEmitter, { files });
+        const createdFiles: URI[] = [];
+        const tasks = files.map(file =>
+            catchPromiseRejection(this.fileSystem.createFile(file.path.toString()), error => {
+                if (typeof error === 'undefined') {
+                    createdFiles.push(file);
+                }
+                if (onCreatedFile) {
+                    onCreatedFile(error, file);
+                }
+            })
+        );
+        await Promise.all(tasks);
+        this.didCreateFilesEmitter.fire({ files: createdFiles });
+        return createdFiles;
+    }
+
+    /**
+     * Create folders for the given URIs, and dispatch proper events.
+     *
+     * @param folders array of folder URIs to create.
+     * @param onCreatedFile callback called on each successful file creation.
+     */
+    async createFolders(folders: URI[], onCreatedFolder?: Callback<URI>): Promise<URI[]> {
+        await WaitUntilEvent.fire(this.willCreateFilesEmitter, { files: folders });
+        const createdFolders: URI[] = [];
+        const tasks = folders.map(folder =>
+            catchPromiseRejection(this.fileSystem.createFolder(folder.path.toString()), error => {
+                if (typeof error === 'undefined') {
+                    createdFolders.push(folder);
+                }
+                if (onCreatedFolder) {
+                    onCreatedFolder(error, folder);
+                }
+            })
+        );
+        await Promise.all(tasks);
+        this.didCreateFilesEmitter.fire({ files: createdFolders });
+        return createdFolders;
+    }
+
+    /**
+     * Rename old URIs into new URIs, and dispatch proper events.
+     *
+     * @param files array of old and new URIs.
+     * @param onCreatedFile callback called on each successful file rename.
+     * @returns array of successfully renamed old and new file URIs.
+     */
+    async renameFiles(files: FileRename[], onRenamedFile?: Callback<FileRename>): Promise<FileRename[]> {
+        await WaitUntilEvent.fire(this.willRenameFilesEmitter, { files });
+        const renamedFiles: FileRename[] = [];
+        const tasks = files.map(file =>
+            catchPromiseRejection(this.fileSystem.move(file.oldUri.path.toString(), file.newUri.path.toString()), error => {
+                if (typeof error === 'undefined') {
+                    renamedFiles.push(file);
+                }
+                if (onRenamedFile) {
+                    onRenamedFile(error, file);
+                }
+            })
+        );
+        await Promise.all(tasks);
+        this.didRenameFilesEmitter.fire({ files: renamedFiles });
+        return renamedFiles;
+    }
+
+    /**
+     * Delete resources (file/folder) for the given URIs, and dispatch proper events.
+     *
+     * @param files array of resource URIs to delete.
+     * @param onCreatedFile callback called on each successful resource deletion.
+     * @returns array of successfully deleted resource URIs.
+     */
+    async deleteFiles(files: URI[], onDeletedFile?: Callback<URI>): Promise<URI[]> {
+        await WaitUntilEvent.fire(this.willDeleteFilesEmitter, { files });
+        const deletedFiles: URI[] = [];
+        const tasks = files.map(file =>
+            catchPromiseRejection(this.fileSystem.delete(file.path.toString()), error => {
+                if (typeof error === 'undefined') {
+                    deletedFiles.push(file);
+                }
+                if (onDeletedFile) {
+                    onDeletedFile(error, file);
+                }
+            })
+        );
+        await Promise.all(tasks);
+        this.didDeleteFilesEmitter.fire({ files: deletedFiles });
+        return deletedFiles;
+    }
+
+    // #endregion
+
+}
+
+interface FileRename {
+    oldUri: URI,
+    newUri: URI,
+};
+
+/**
+ * Value reprensents the input that originated the callback.
+ */
+interface Callback<T> {
+    (error: Error | undefined, value: T): void
+}
+
+/**
+ * Catch an error if any, suppress any subsequent error.
+ */
+function catchPromiseRejection<T>(promise: PromiseLike<T>, callback: (error?: Error) => void): PromiseLike<void> {
+    return promise.then(() => {
+        try {
+            callback(undefined);
+        } catch (error) {
+            console.error(error);
+        }
+    }, reason => {
+        try {
+            callback(reason);
+        } catch (error) {
+            console.error(error);
+        }
+    });
 }
 
 export interface WorkspaceInput {

@@ -19,7 +19,7 @@ import { interfaces, injectable } from 'inversify';
 import { WorkspaceExt, StorageExt, MAIN_RPC_CONTEXT, WorkspaceMain, WorkspaceFolderPickOptionsMain } from '../../common/plugin-api-rpc';
 import { RPCProtocol } from '../../common/rpc-protocol';
 import { URI as Uri } from 'vscode-uri';
-import { UriComponents } from '../../common/uri-components';
+import { UriComponents, theiaUritoUriComponents } from '../../common/uri-components';
 import { QuickOpenModel, QuickOpenItem, QuickOpenMode } from '@theia/core/lib/browser/quick-open/quick-open-model';
 import { MonacoQuickOpenService } from '@theia/monaco/lib/browser/monaco-quick-open-service';
 import { FileStat } from '@theia/filesystem/lib/common';
@@ -72,6 +72,35 @@ export class WorkspaceMainImpl implements WorkspaceMain, Disposable {
         this.processWorkspaceFoldersChanged(this.workspaceService.tryGetRoots());
         this.toDispose.push(this.workspaceService.onWorkspaceChanged(roots => {
             this.processWorkspaceFoldersChanged(roots);
+        }));
+
+        this.toDispose.push(this.workspaceService.onWillCreateFiles(event => {
+            event.waitUntil(this.proxy.$onWillCreateFiles({ files: event.files.map(theiaUritoUriComponents) }));
+        }));
+        this.toDispose.push(this.workspaceService.onDidCreateFiles(event => {
+            this.proxy.$onDidCreateFiles({ files: event.files.map(theiaUritoUriComponents) });
+        }));
+        this.toDispose.push(this.workspaceService.onWillRenameFiles(event => {
+            event.waitUntil(this.proxy.$onWillRenameFiles({
+                files: event.files.map(file => ({
+                    oldUri: theiaUritoUriComponents(file.oldUri),
+                    newUri: theiaUritoUriComponents(file.newUri),
+                })),
+            }));
+        }));
+        this.toDispose.push(this.workspaceService.onDidRenameFiles(event => {
+            this.proxy.$onDidRenameFiles({
+                files: event.files.map(file => ({
+                    oldUri: theiaUritoUriComponents(file.oldUri),
+                    newUri: theiaUritoUriComponents(file.newUri),
+                })),
+            });
+        }));
+        this.toDispose.push(this.workspaceService.onWillDeleteFiles(event => {
+            event.waitUntil(this.proxy.$onWillDeleteFiles({ files: event.files.map(theiaUritoUriComponents) }));
+        }));
+        this.toDispose.push(this.workspaceService.onDidDeleteFiles(event => {
+            this.proxy.$onDidDeleteFiles({ files: event.files.map(theiaUritoUriComponents) });
         }));
     }
 
