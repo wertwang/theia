@@ -18,7 +18,7 @@
 import URI from '@theia/core/lib/common/uri';
 import { EditorPreferenceChange, EditorPreferences, TextEditor, DiffNavigator } from '@theia/editor/lib/browser';
 import { DiffUris } from '@theia/core/lib/browser/diff-uris';
-import { inject, injectable } from 'inversify';
+import { inject, injectable, named } from 'inversify';
 import { DisposableCollection, deepClone, Disposable, } from '@theia/core/lib/common';
 import { MonacoToProtocolConverter, ProtocolToMonacoConverter, TextDocumentSaveReason } from 'monaco-languageclient';
 import { MonacoCommandServiceFactory } from './monaco-command-service';
@@ -35,9 +35,15 @@ import { MonacoBulkEditService } from './monaco-bulk-edit-service';
 
 import IEditorOverrideServices = monaco.editor.IEditorOverrideServices;
 import { ApplicationServer } from '@theia/core/lib/common/application-protocol';
-import { OS } from '@theia/core';
+import { OS, MaybePromise, ContributionProvider, Prioritizeable } from '@theia/core';
 import { KeybindingRegistry } from '@theia/core/lib/browser';
 import { MonacoResolvedKeybinding } from './monaco-resolved-keybinding';
+
+export const MonacoEditorOptionsProvider = Symbol('MonacoEditorOptionsProvider');
+export interface MonacoEditorOptionsProvider {
+    canHandle(model: MonacoEditorModel): MaybePromise<number>;
+    create(model: MonacoEditorModel, defaultOptions: MonacoEditor.IOptions): MonacoEditor.IOptions;
+}
 
 @injectable()
 export class MonacoEditorProvider {
@@ -50,6 +56,10 @@ export class MonacoEditorProvider {
 
     @inject(KeybindingRegistry)
     protected keybindingRegistry: KeybindingRegistry;
+
+    @inject(ContributionProvider)
+    @named(MonacoEditorOptionsProvider)
+    protected readonly editorOptionsProvider: ContributionProvider<MonacoEditorOptionsProvider>;
 
     private isWindowsBackend: boolean = false;
 
@@ -207,7 +217,10 @@ export class MonacoEditorProvider {
 
     protected async createMonacoEditor(uri: URI, override: IEditorOverrideServices, toDispose: DisposableCollection): Promise<MonacoEditor> {
         const model = await this.getModel(uri, toDispose);
-        const options = this.createMonacoEditorOptions(model);
+        const contributions = this.editorOptionsProvider.getContributions();
+        const optionsProvider = (await Prioritizeable.prioritizeAll(contributions, c => c.canHandle(model))).map(({ value }) => value).shift();
+        const defaultOptions = this.createMonacoEditorOptions(model);
+        const options = optionsProvider ? optionsProvider.create(model, defaultOptions) : defaultOptions;
         const editor = new MonacoEditor(uri, model, document.createElement('div'), this.services, options, override);
         toDispose.push(this.editorPreferences.onPreferenceChanged(event => {
             if (event.affects(uri.toString(), model.languageId)) {
@@ -219,7 +232,7 @@ export class MonacoEditorProvider {
         return editor;
     }
 
-    protected createMonacoEditorOptions(model: MonacoEditorModel): MonacoEditor.IOptions {
+    createMonacoEditorOptions(model: MonacoEditorModel): MonacoEditor.IOptions {
         const options = this.createOptions(this.preferencePrefixes, model.uri, model.languageId);
         options.model = model.textEditorModel;
         options.readOnly = model.readOnly;
