@@ -37,6 +37,8 @@ export interface Tree extends Disposable {
      * Emit when the tree is changed.
      */
     readonly onChanged: Event<void>;
+
+    readonly onNodesAdded: Event<TreeNode[]>;
     /**
      * Return a node for the given identifier or undefined if such does not exist.
      */
@@ -233,6 +235,7 @@ export class TreeImpl implements Tree {
 
     protected _root: TreeNode | undefined;
     protected readonly onChangedEmitter = new Emitter<void>();
+    protected readonly onNodesAddedEmitter = new Emitter<TreeNode[]>();
     protected readonly onNodeRefreshedEmitter = new Emitter<CompositeTreeNode & WaitUntilEvent>();
     protected readonly toDispose = new DisposableCollection();
 
@@ -247,6 +250,7 @@ export class TreeImpl implements Tree {
         this.toDispose.push(this.onChangedEmitter);
         this.toDispose.push(this.onNodeRefreshedEmitter);
         this.toDispose.push(this.onDidChangeBusyEmitter);
+        this.toDispose.push(this.onNodesAddedEmitter);
     }
 
     dispose(): void {
@@ -267,6 +271,10 @@ export class TreeImpl implements Tree {
 
     get onChanged(): Event<void> {
         return this.onChangedEmitter.event;
+    }
+
+    get onNodesAdded(): Event<TreeNode[]> {
+        return this.onNodesAddedEmitter.event;
     }
 
     protected fireChanged(): void {
@@ -314,6 +322,13 @@ export class TreeImpl implements Tree {
     }
 
     protected async setChildren(parent: CompositeTreeNode, children: TreeNode[]): Promise<CompositeTreeNode | undefined> {
+        const resArr: TreeNode[] = [];
+        children.forEach(newNode => {
+            if (parent.children.find(node => node.id === newNode.id)) {
+            } else {
+                resArr.push(newNode);
+            }
+        });
         const root = this.getRootNode(parent);
         if (this.nodes[root.id] && this.nodes[root.id] !== root) {
             console.error(`Child node '${parent.id}' does not belong to this '${root.id}' tree.`);
@@ -323,6 +338,7 @@ export class TreeImpl implements Tree {
         parent.children = children;
         this.addNode(parent);
         await this.fireNodeRefreshed(parent);
+        this.onNodesAddedEmitter.fire(resArr);
         return parent;
     }
 

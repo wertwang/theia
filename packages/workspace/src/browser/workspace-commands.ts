@@ -232,9 +232,10 @@ export class WorkspaceCommandContribution implements CommandContribution {
                         initialValue: vacantChildUri.path.base,
                         validate: name => this.validateFileName(name, parent, true)
                     }, this.labelProvider);
-                    dialog.open().then(name => {
+                    dialog.open().then(async name => {
                         if (name) {
-                            this.fileSystem.createFolder(parentUri.resolve(name).toString());
+                            const folder = await this.fileSystem.createFolder(parentUri.resolve(name).toString());
+                            this.selectionService.selection = folder;
                         }
                     });
                 }

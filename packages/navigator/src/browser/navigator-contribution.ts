@@ -21,7 +21,16 @@ import {
     OpenerService, FrontendApplicationContribution, FrontendApplication, CompositeTreeNode, PreferenceScope
 } from '@theia/core/lib/browser';
 import { FileDownloadCommands } from '@theia/filesystem/lib/browser/download/file-download-command-contribution';
-import { CommandRegistry, MenuModelRegistry, MenuPath, isOSX, Command, DisposableCollection, Mutable } from '@theia/core/lib/common';
+import {
+    CommandRegistry,
+    MenuModelRegistry,
+    MenuPath,
+    isOSX,
+    Command,
+    DisposableCollection,
+    Mutable,
+    SelectionService
+} from '@theia/core/lib/common';
 import { SHELL_TABBAR_CONTEXT_MENU } from '@theia/core/lib/browser';
 import { WorkspaceCommands, WorkspaceService, WorkspacePreferences } from '@theia/workspace/lib/browser';
 import { FILE_NAVIGATOR_ID, FileNavigatorWidget, EXPLORER_VIEW_CONTAINER_ID } from './navigator-widget';
@@ -134,6 +143,7 @@ export class FileNavigatorContribution extends AbstractViewContribution<FileNavi
         @inject(OpenerService) protected readonly openerService: OpenerService,
         @inject(FileNavigatorFilter) protected readonly fileNavigatorFilter: FileNavigatorFilter,
         @inject(WorkspaceService) protected readonly workspaceService: WorkspaceService,
+        @inject(SelectionService) protected readonly selectionService: SelectionService,
         @inject(WorkspacePreferences) protected readonly workspacePreferences: WorkspacePreferences
     ) {
         super({
@@ -175,7 +185,15 @@ export class FileNavigatorContribution extends AbstractViewContribution<FileNavi
     }
 
     async initializeLayout(app: FrontendApplication): Promise<void> {
-        await this.openView();
+        const widget = await this.openView();
+        const model = widget.model;
+        model.onChanged(() => this.onCurrentWidgetChangedHandler());
+        model.onNodesAdded(nodes => {
+            const node = nodes[0];
+            if (SelectableTreeNode.is(node)) {
+                model.selectNode(node);
+            }
+        });
     }
 
     registerCommands(registry: CommandRegistry): void {
